@@ -3,7 +3,10 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: '/EcoVerse-Quest/', // Add this line
   plugins: [react()],
+  // (leave the rest of your file as is)
+ 
   build: {
     // Optimize chunk splitting for better loading
     rollupOptions: {
