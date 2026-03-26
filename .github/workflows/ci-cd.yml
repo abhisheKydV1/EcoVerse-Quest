@@ -1,0 +1,153 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+
+    - name: Install client dependencies
+      run: |
+        cd client
+        npm ci
+
+    - name: Install server dependencies
+      run: |
+        cd server
+        npm ci
+
+    - name: Run client tests
+      run: |
+        cd client
+        npm run test:ci
+
+    - name: Run server tests
+      run: |
+        cd server
+        npm run test:ci
+
+    - name: Build client
+      run: |
+        cd client
+        npm run build
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install client dependencies
+      run: |
+        cd client
+        npm ci
+
+    - name: Run ESLint
+      run: |
+        cd client
+        npm run lint
+
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        cd client && npm ci
+        cd ../server && npm ci
+
+    - name: Run security audit
+      run: |
+        cd client && npm audit --audit-level high
+        cd ../server && npm audit --audit-level high
+
+    - name: Run Snyk security scan
+      uses: snyk/actions/node@master
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --file=client/package.json
+      continue-on-error: true
+
+  deploy-staging:
+    needs: [test, lint, security]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and push Docker images
+      run: |
+        # Build and push client
+        docker build -t ${{ secrets.ECR_REGISTRY }}/ecoverse-client:${{ github.sha }} ./client
+        docker push ${{ secrets.ECR_REGISTRY }}/ecoverse-client:${{ github.sha }}
+
+        # Build and push server
+        docker build -t ${{ secrets.ECR_REGISTRY }}/ecoverse-server:${{ github.sha }} ./server
+        docker push ${{ secrets.ECR_REGISTRY }}/ecoverse-server:${{ github.sha }}
+
+    - name: Deploy to staging
+      run: |
+        aws ecs update-service --cluster ecoverse-staging --service ecoverse-api --force-new-deployment
+        aws ecs update-service --cluster ecoverse-staging --service ecoverse-client --force-new-deployment
+
+  deploy-production:
+    needs: [test, lint, security]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Deploy to production
+      run: |
+        echo "Production deployment would go here"
+        # Add your production deployment steps
